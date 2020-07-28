@@ -78,7 +78,15 @@ class Scheduler(commands.Cog):
 
     @has_some_role()
     @commands.group(aliases=['reminder'], invoke_without_command=True)
-    async def remind(self, ctx):
+    async def remind(self, ctx, content: str):
+        embed = discord.Embed(title="以下の内容でリマインドします", colour=0x1e90ff)
+        embed.add_field(
+            name="内容\n---",
+            value=content,
+            inline=True)
+
+        await ctx.send(embed=embed)
+
         settime = 1
 
         init_reaction_list = [
