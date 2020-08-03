@@ -3,6 +3,7 @@
 
 
 import asyncio
+from enum import Flag
 import json
 import os
 import re
@@ -10,6 +11,7 @@ from datetime import datetime, timedelta
 
 import demoji
 import discord
+from discord import embeds
 import mojimoji as mj
 from discord.ext import commands
 
@@ -45,6 +47,8 @@ class Scheduler(commands.Cog):
 
         demoji.download_codes()
 
+        self.buffer = {}
+
     def dump_json(self, json_data):
         with open(self.json_name, "w") as f:
             json.dump(
@@ -76,18 +80,45 @@ class Scheduler(commands.Cog):
         num = self.num_emoji_list.index(reaction)
         return num
 
+    def return_edited_info_embed(self, embed, key, content) -> discord.embeds:
+        embed_dict = embed.to_dict()
+        temp_dict = embed_dict
+
+        for num, i in enumerate(temp_dict['fields']):
+            if i['name'] == key:
+                print(i['value'])
+                embed_dict['fields'][num]['value'] = content
+                print(embed_dict['fields'][num]['value'])
+
+        result_embed = discord.Embed.from_dict(embed_dict)
+
+        return result_embed
+
     @has_some_role()
     @commands.group(aliases=['reminder'], invoke_without_command=True)
     async def remind(self, ctx, content: str):
-        embed = discord.Embed(title="以下の内容でリマインドします", colour=0x1e90ff)
-        embed.add_field(
-            name="内容\n---",
-            value=content,
-            inline=True)
-
-        await ctx.send(embed=embed)
-
         settime = 1
+        self.buffer = {ctx.message.id: {'progress': 0, 'input_buffer': 0}}
+
+        info_embed = discord.Embed(title="以下の内容でリマインドします", colour=0x1e90ff)
+        info_embed.add_field(
+            name="内容\n---\n",
+            value=content,
+            inline=False)
+
+        info_embed.add_field(
+            name="繰り返し回数",
+            value=f"{self.buffer[ctx.message.id]['input_buffer']}",
+            inline=False)
+
+        info_embed.add_field(
+            name="設定進捗",
+            value=f"{self.buffer[ctx.message.id]['progress']}",
+            inline=False)
+
+        info_embed.set_footer(text=f'{self.emoji_go}で次の項へ\n{self.emoji_x}でキャンセル')
+
+        content_msg = await ctx.send(embed=info_embed)
 
         init_reaction_list = [
             self.emoji_ok,
@@ -121,18 +152,24 @@ class Scheduler(commands.Cog):
         embed.set_footer(text='準備完了です')
         await main_msg.edit(embed=embed)
 
+        def check(reaction, _user):
+            return _user == ctx.author
+
         while True:
             try:
-                reaction, user = await self.bot.wait_for('reaction_add', timeout=settime * 60)
+                reaction, _user = await self.bot.wait_for("reaction_add", timeout=settime * 60.0, check=check)
+
             except asyncio.TimeoutError:
+                await content_msg.delete()
                 embed = discord.Embed(title="タイムアウトしました", colour=0x1e90ff)
                 await main_msg.edit(embed=embed)
                 await main_msg.clear_reactions()
+                # 辞書削除する
                 break
             else:
-                if user.id != ctx.author.id:
-                    await self.reaction_remover(ctx, main_msg, reaction, user)
-                    caution_msg = await ctx.send(f'{user.mention}:送信主のみが設定できます')
+                if _user.id != ctx.author.id: # イランかも
+                    await self.reaction_remover(ctx, main_msg, reaction, _user)
+                    caution_msg = await ctx.send(f'{_user.mention}:送信主のみが設定できます')
                     await self.autodel_msg(caution_msg)
                     continue
 
@@ -140,35 +177,50 @@ class Scheduler(commands.Cog):
                 for i in reaction_raw:
                     reaction_raw = i
 
-                if reaction.emoji == self.emoji_x:
+                if reaction.emoji == self.emoji_x:  # キャンセル
+                    await content_msg.delete()
                     embed = discord.Embed(title="キャンセルしました", colour=0x1e90ff)
                     await main_msg.edit(embed=embed)
                     await main_msg.clear_reactions()
                     break
 
-                if reaction.emoji == self.num_emoji_list[0]:
+                if reaction.emoji == self.emoji_go:  # next
+                    # progressを進める処理
+                    pass
+
+                # 数字だけここに入る
+                num = self.return_reaction_to_num(reaction_raw)
+
+                if self.buffer[ctx.message.id]['progress'] == 0:
+                    # self.progress[ctx.message.id] += 1
+                    # progressを進めて震度をとる
+                    # あんまりに大きい数は止める
+                    input_num = int(str(self.buffer[ctx.message.id]['input_buffer']) + str(num))
+                    self.buffer[ctx.message.id]['input_buffer'] = input_num
+
+                    print(self.buffer[ctx.message.id]['input_buffer'])
+
+                    if num == 0:
+                        NoR_msg = '無制限に繰り返します'
+                    else:
+                        NoR_msg = f'{input_num}回繰り返します'
+
+                    info_embed = self.return_edited_info_embed(info_embed, '繰り返し回数', NoR_msg)
+                    await content_msg.edit(embed=info_embed)
+
+                    '''
                     embed.clear_fields()
                     embed.add_field(
-                        name="繰り返し回数を決定します",
-                        value=f"ずっと繰り返す場合は{self.num_emoji_list[0]}を、それ以外の場合は該当の回数を押してください",
+                        name="日付を指定します",
+                        value=f"その日の00:00にリマインドします",
                         inline=True)
-                    embed.set_footer(text='準備完了です')
+                    embed.set_footer(text=footer_msg)
+                    await main_msg.edit(embed=embed)
+                    '''
 
-                    num = self.return_reaction_to_num(reaction_raw)
-
-                    print(num)
-
-                await self.reaction_remover(ctx, main_msg, reaction, user)
+                await self.reaction_remover(ctx, main_msg, reaction, _user)
 
                 pass  # ここから
-
-    @remind.error
-    async def remind_error(self, ctx, error):
-        if isinstance(error, commands.BadArgument):
-            notify_msg = await ctx.send(f'{ctx.author.mention}\n引数エラーです\n順番が間違っていませんか？')
-            await self.autodel_msg(notify_msg)
-        else:
-            raise
 
     @commands.command(aliases=['ls_mi'])
     @has_some_role()
