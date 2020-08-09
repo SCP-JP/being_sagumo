@@ -81,14 +81,13 @@ class Scheduler(commands.Cog):
         return num
 
     def return_edited_info_embed(self, embed, key, content) -> discord.embeds:
+        # nameで指定できる関数
         embed_dict = embed.to_dict()
         temp_dict = embed_dict
 
         for num, i in enumerate(temp_dict['fields']):
             if i['name'] == key:
-                print(i['value'])
                 embed_dict['fields'][num]['value'] = content
-                print(embed_dict['fields'][num]['value'])
 
         result_embed = discord.Embed.from_dict(embed_dict)
 
@@ -196,16 +195,28 @@ class Scheduler(commands.Cog):
                     # progressを進めて震度をとる
                     # あんまりに大きい数は止める
                     input_num = int(str(self.buffer[ctx.message.id]['input_buffer']) + str(num))
+
+                    print(input_num)
+
+                    if input_num > 12:
+                        input_num = 0
+                        warning_msg = await ctx.send('13回以上は無制限とします')
+                        await self.autodel_msg(warning_msg)
+
                     self.buffer[ctx.message.id]['input_buffer'] = input_num
 
                     print(self.buffer[ctx.message.id]['input_buffer'])
 
-                    if num == 0:
-                        NoR_msg = '無制限に繰り返します'
+                    if input_num == 0:
+                        # Number of repetitions
+                        NoR_msg = '**無制限**に繰り返します'
                     else:
-                        NoR_msg = f'{input_num}回繰り返します'
+                        NoR_msg = f'**{input_num}**回繰り返します'
 
-                    info_embed = self.return_edited_info_embed(info_embed, '繰り返し回数', NoR_msg)
+                    #info_embed = self.return_edited_info_embed(info_embed, '繰り返し回数', NoR_msg)
+                    #await content_msg.edit(embed=info_embed)
+                    # ここで書き換える
+                    info_embed.set_field_at(1, name="繰り返し回数", value=NoR_msg, inline=False)
                     await content_msg.edit(embed=info_embed)
 
                     '''
