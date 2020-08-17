@@ -3,16 +3,17 @@
 
 
 import asyncio
-from enum import Flag
 import json
 import os
 import re
 from datetime import datetime, timedelta
+from enum import Flag
+from typing import Union
 
 import demoji
 import discord
-from discord import embeds
 import mojimoji as mj
+from discord import embeds
 from discord.ext import commands
 
 
@@ -49,6 +50,12 @@ class Scheduler(commands.Cog):
 
         self.buffer = {}
 
+        self.patter_list = [f'{1}\ufe0f\u20e3 : 毎月n日\n',
+                            f'{2}\ufe0f\u20e3 : 毎週n曜日\n',
+                            f'{3}\ufe0f\u20e3 : n日後\n',
+                            f'{4}\ufe0f\u20e3 : 特定の日\n'
+                            ]
+
     def dump_json(self, json_data):
         with open(self.json_name, "w") as f:
             json.dump(
@@ -76,9 +83,12 @@ class Scheduler(commands.Cog):
         except discord.HTTPException:
             await ctx.send('通信エラーです.')
 
-    def return_reaction_to_num(self, reaction) -> int:
-        num = self.num_emoji_list.index(reaction)
-        return num
+    def return_reaction_to_num(self, reaction) -> Union[int, None]:
+        try:
+            num = self.num_emoji_list.index(reaction)
+            return num
+        except ValueError:
+            return None
 
     def return_edited_info_embed(self, embed, key, content) -> discord.embeds:
         # nameで指定できる関数
@@ -106,13 +116,19 @@ class Scheduler(commands.Cog):
             inline=False)
 
         info_embed.add_field(
+            name="設定進捗",
+            # 個々の数字は最大数に合わせる
+            value=f"{self.buffer[ctx.message.id]['progress']}/3",
+            inline=False)
+
+        info_embed.add_field(
             name="繰り返し回数",
             value=f"{self.buffer[ctx.message.id]['input_buffer']}",
             inline=False)
 
         info_embed.add_field(
-            name="設定進捗",
-            value=f"{self.buffer[ctx.message.id]['progress']}",
+            name="パターン",
+            value=f"{''.join(self.patter_list)}",
             inline=False)
 
         info_embed.set_footer(text=f'{self.emoji_go}で次の項へ\n{self.emoji_x}でキャンセル')
@@ -126,7 +142,7 @@ class Scheduler(commands.Cog):
         embed = discord.Embed(title="リマインダを設定します", colour=0x1e90ff)
         embed.add_field(
             name="対話形式でリマインダを設定します",
-            value=f"無操作タイムアウトは{settime}分です\n少々お待ちください",
+            value=f"タイムアウトは{settime}分です\n少々お待ちください",
             inline=True)
         embed.set_footer(text='少々お待ちください')
 
@@ -183,55 +199,84 @@ class Scheduler(commands.Cog):
                     await main_msg.clear_reactions()
                     break
 
-                if reaction.emoji == self.emoji_go:  # next
-                    # progressを進める処理
-                    pass
+                if reaction.emoji == self.emoji_ok:  # next
+                    self.buffer[ctx.message.id]['progress'] += 1
+                    info_embed.set_field_at(1, name="設定進捗",
+                                            # 個々の数字は最大数に合わせる
+                                            value=f"{self.buffer[ctx.message.id]['progress']}/3",
+                                            inline=False)
+
+                    if self.buffer[ctx.message.id]['progress'] == 1:
+                        embed.clear_fields()
+                        embed.add_field(
+                            name="繰り返しのパターンを指定します",
+                            value="該当の番号を押してください",
+                            inline=True)
+                        embed.set_footer(text='もうちょい')
+                        await main_msg.edit(embed=embed)
+
+                    await content_msg.edit(embed=info_embed)
 
                 # 数字だけここに入る
                 num = self.return_reaction_to_num(reaction_raw)
+                if isinstance(num, int):
+                    if self.buffer[ctx.message.id]['progress'] == 0:
+                        input_num = int(str(self.buffer[ctx.message.id]['input_buffer']) + str(num))
 
-                if self.buffer[ctx.message.id]['progress'] == 0:
-                    # self.progress[ctx.message.id] += 1
-                    # progressを進めて震度をとる
-                    # あんまりに大きい数は止める
-                    input_num = int(str(self.buffer[ctx.message.id]['input_buffer']) + str(num))
+                        if input_num > 12:
+                            input_num = 0
+                            warning_msg = await ctx.send('13回以上は無制限とします')
+                            await self.autodel_msg(warning_msg)
 
-                    print(input_num)
+                        self.buffer[ctx.message.id]['input_buffer'] = input_num
 
-                    if input_num > 12:
-                        input_num = 0
-                        warning_msg = await ctx.send('13回以上は無制限とします')
-                        await self.autodel_msg(warning_msg)
+                        if input_num == 0:
+                            # Number of repetitions
+                            NoR_msg = '**無制限**に繰り返します'
+                        else:
+                            NoR_msg = f'**{input_num}**回繰り返します'
 
-                    self.buffer[ctx.message.id]['input_buffer'] = input_num
+                        # ここで書き換える
+                        info_embed.set_field_at(2, name="繰り返し回数", value=NoR_msg, inline=False)
+                        await content_msg.edit(embed=info_embed)
 
-                    print(self.buffer[ctx.message.id]['input_buffer'])
+                    elif self.buffer[ctx.message.id]['progress'] == 1:
+                        # ここを作る(各コマンドの処理)
+                        if num == 1:
+                            embed.clear_fields()
+                            embed.add_field(
+                                name="毎月n日に通知します",
+                                value="日付を押してください",
+                                inline=True)
+                            embed.set_footer(text='これで終わり')
 
-                    if input_num == 0:
-                        # Number of repetitions
-                        NoR_msg = '**無制限**に繰り返します'
-                    else:
-                        NoR_msg = f'**{input_num}**回繰り返します'
+                        elif num == 2:
+                            embed.clear_fields()
+                            embed.add_field(
+                                name="毎週n曜日に通知します",
+                                value="日付を押してください",
+                                inline=True)
+                            embed.set_footer(text='これで終わり')
 
-                    #info_embed = self.return_edited_info_embed(info_embed, '繰り返し回数', NoR_msg)
-                    #await content_msg.edit(embed=info_embed)
-                    # ここで書き換える
-                    info_embed.set_field_at(1, name="繰り返し回数", value=NoR_msg, inline=False)
-                    await content_msg.edit(embed=info_embed)
+                        elif num == 3:
+                            embed.clear_fields()
+                            embed.add_field(
+                                name="n日後に通知します",
+                                value="日数を押してください",
+                                inline=True)
+                            embed.set_footer(text='これで終わり')
 
-                    '''
-                    embed.clear_fields()
-                    embed.add_field(
-                        name="日付を指定します",
-                        value=f"その日の00:00にリマインドします",
-                        inline=True)
-                    embed.set_footer(text=footer_msg)
-                    await main_msg.edit(embed=embed)
-                    '''
+                        elif num == 4:
+                            embed.clear_fields()
+                            embed.add_field(
+                                name="特定の日に通知します",
+                                value="以下の書式に従って押してください\n5月21日の場合 : 0521",
+                                inline=True)
+                            embed.set_footer(text='これで終わり')
+
+                        await main_msg.edit(embed=embed)
 
                 await self.reaction_remover(ctx, main_msg, reaction, _user)
-
-                pass  # ここから
 
     @commands.command(aliases=['ls_mi'])
     @has_some_role()
